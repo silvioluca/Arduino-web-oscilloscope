@@ -4,404 +4,625 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Arduino Oscilloscope</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+  // Applica il tema salvato prima del primo paint (evita il flash chiaro/scuro)
+  try {
+    const f = (JSON.parse(localStorage.getItem('arduino-oscilloscope.v2')) || {}).form || {};
+    if (f['theme-sel'] === 'light' || f['theme-sel'] === 'dark') document.documentElement.dataset.theme = f['theme-sel'];
+  } catch (e) {}
+</script>
+<!-- Chart.js in locale (funziona offline); fallback su CDN se il file manca -->
+<script src="vendor/chart.umd.min.js"></script>
+<script>window.Chart || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"><\/script>');</script>
 <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
+<!-- Icona info riutilizzata da tutte le card -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6"/><path d="M12 7.6v.01"/></symbol>
+</svg>
+
 <div class="container">
 
   <!-- ── Header ── -->
-  <div class="header">
+  <header class="header">
     <h1 class="title">Arduino Oscilloscope</h1>
     <div class="serial-bar">
-      <div id="no-serial-warn" class="no-serial">⚠ Web Serial non supportata — usa Chrome o Edge.</div>
-      <select id="baud-sel" class="baud-sel">
-        <option value="9600" selected>9600</option>
-        <option value="57600">57600</option>
-        <option value="115200">115200</option>
+      <div id="no-serial-warn" class="badge warn" hidden>⚠ Web Serial non supportata — usa Chrome o Edge</div>
+      <span class="badge conn" id="conn-status" role="status">● disconnesso</span>
+      <select id="baud-sel" class="sel" data-persist aria-label="Baud rate">
+        <option value="9600" selected>9600 baud</option>
+        <option value="19200">19200 baud</option>
+        <option value="38400">38400 baud</option>
+        <option value="57600">57600 baud</option>
+        <option value="115200">115200 baud</option>
+        <option value="230400">230400 baud</option>
+        <option value="250000">250000 baud</option>
+        <option value="500000">500000 baud</option>
+        <option value="1000000">1000000 baud</option>
+        <option value="2000000">2000000 baud</option>
       </select>
-      <button class="conn-btn" id="conn-btn">🔌 Connect Serial</button>
-      <span class="conn-status" id="conn-status">● disconnected</span>
+      <button class="btn primary" id="conn-btn">🔌 Connetti seriale</button>
+      <select id="theme-sel" class="sel" data-persist aria-label="Tema">
+        <option value="auto" selected>◐ Auto</option>
+        <option value="light">☀ Chiaro</option>
+        <option value="dark">☾ Scuro</option>
+      </select>
     </div>
-  </div>
+  </header>
 
   <div class="main">
 
-    <!-- ══ LEFT COLUMN ══ -->
-    <div class="col-left">
+    <!-- ══ COLONNA SINISTRA ══ -->
+    <main class="col-left">
 
-      <!-- Channel selector -->
-      <div class="ch-row">
-        <label class="ch-label"><input type="checkbox" id="ch1-toggle" checked disabled><span class="ch-dot" style="background:#008184"></span>CH1</label>
-        <label class="ch-label disabled"><input type="checkbox" id="ch2-toggle" checked disabled><span class="ch-dot" style="background:#FF9900"></span>CH2</label>
-        <label class="ch-label disabled"><input type="checkbox" id="ch3-toggle" checked disabled><span class="ch-dot" style="background:#FF2B2B"></span>CH3</label>
-        <label class="ch-label" style="margin-left:auto"><input type="checkbox" id="points-toggle">POINTS</label>
-        <label class="ch-label"><input type="checkbox" id="log-scale-toggle">LOG Y</label>
-      </div>
-
-      <!-- Chart -->
-      <div class="chart-wrapper">
-        <canvas id="plot"></canvas>
-        <canvas id="grid-overlay"></canvas>
-      </div>
-
-      <!-- Selection info -->
-      <div id="selection-info" class="sel-info" style="display:none">
-        <span id="sel-duration">—</span><span class="sel-div"></span><span id="sel-avg">—</span>
-      </div>
-
-      <!-- Zoom controls -->
-      <div class="ctrl-bar">
-        <div class="ctrl-grp"><span class="lbl">Y SCALE</span><button class="btn" id="y-zoom-in">＋</button><button class="btn" id="y-zoom-out">－</button></div>
-        <div class="vdiv"></div>
-        <div class="ctrl-grp"><span class="lbl">Y OFFSET</span><button class="btn" id="y-offset-up">▲</button><button class="btn" id="y-offset-down">▼</button></div>
-        <div class="vdiv"></div>
-        <div class="ctrl-grp"><span class="lbl">X SAMPLES</span><button class="btn" id="x-zoom-in">＋</button><button class="btn" id="x-zoom-out">－</button><span class="lbl" id="msdiv-display">—</span></div>
-        <div class="ctrl-grp ctrl-grp-r"><button class="btn" id="pause-btn">⏸</button></div>
-      </div>
-
-      <!-- Interval -->
-      <div class="slider-bar">
-        <span class="lbl">INTERVAL</span>
-        <input type="range" id="interval-slider" min="16" max="2000" step="16" value="16">
-        <span class="slider-val" id="interval-display">16 ms</span>
-      </div>
-
-      <!-- Stats -->
-      <div class="section">
-        <div class="sec-hdr"><span class="sec-title">STATISTICS</span></div>
-        <div class="stats-hdr"><span></span><span class="slbl" style="text-align:center">MIN</span><span class="slbl" style="text-align:center">MAX</span><span class="slbl" style="text-align:center">AVG</span></div>
-        <div class="stats-grid" id="stats-ch1" style="display:none"><span class="schl" style="color:#008184">CH1</span><span class="sval" id="stat-ch1-min">—</span><span class="sval" id="stat-ch1-max">—</span><span class="sval" id="stat-ch1-avg">—</span></div>
-        <div class="stats-grid" id="stats-ch2" style="display:none"><span class="schl" style="color:#FF9900">CH2</span><span class="sval" id="stat-ch2-min">—</span><span class="sval" id="stat-ch2-max">—</span><span class="sval" id="stat-ch2-avg">—</span></div>
-        <div class="stats-grid" id="stats-ch3" style="display:none"><span class="schl" style="color:#FF2B2B">CH3</span><span class="sval" id="stat-ch3-min">—</span><span class="sval" id="stat-ch3-max">—</span><span class="sval" id="stat-ch3-avg">—</span></div>
-      </div>
-
-      <!-- ══ Tab section ══ -->
-      <div class="tab-section">
-        <div class="tab-bar">
-          <button class="tab-btn active" data-tab="tab-trigger">TRIGGER</button>
-          <button class="tab-btn" data-tab="tab-gen">GENERATOR</button>
-          <button class="tab-btn" data-tab="tab-analysis">FIT</button>
-          <button class="tab-btn" data-tab="tab-measure">MEASURE</button>
-          <button class="tab-btn" data-tab="tab-fft">FFT</button>
-          <button class="tab-btn" data-tab="tab-xy">XY</button>
-        </div>
-
-        <!-- TRIGGER -->
-        <div class="tab-panel active" id="tab-trigger">
-          <div class="tab-content">
-            <div class="tab-row">
-              <label class="ch-label"><input type="checkbox" id="trigger-enabled">ENABLED</label>
-              <div class="trig-status off" id="trigger-status">OFF</div>
-            </div>
-            <div class="tab-row">
-              <div class="ctrl-grp"><span class="lbl">CHANNEL</span>
-                <select id="trigger-channel" class="sel"><option value="v1">CH1</option><option value="v2">CH2</option><option value="v3">CH3</option></select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">EDGE</span>
-                <select id="trigger-edge" class="sel"><option value="rising">↑ Rising</option><option value="falling">↓ Falling</option><option value="both">↕ Both</option></select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">LEVEL</span><span class="trig-lvl" id="trigger-level-display">—</span></div>
-              <div class="ctrl-grp"><span class="lbl">HOLD</span>
-                <select id="trigger-hold" class="sel"><option value="500">500ms</option><option value="1000">1s</option><option value="5000">5s</option><option value="10000">10s</option><option value="-1">∞</option></select>
-              </div>
-            </div>
-            <p class="hint">Trascina la linea verde sull'asse Y per il livello. Click sul badge per re-arm.</p>
+      <!-- Oscilloscopio -->
+      <section class="card">
+        <div class="card-head">
+          <div class="toggle-group" id="ch-toggles"></div>
+          <span class="muted-text" id="ch-empty">In attesa di dati — connetti la seriale o attiva il generatore</span>
+          <div class="toggle-group push">
+            <label class="tgl" title="Mostra solo i campioni, senza linea"><input type="checkbox" id="points-toggle" data-persist>PUNTI</label>
+            <label class="tgl" title="Scala Y logaritmica"><input type="checkbox" id="log-scale-toggle" data-persist>LOG Y</label>
           </div>
+          <span class="info">
+            <button class="info-btn" aria-controls="info-scope" aria-expanded="false" aria-label="Come usare il grafico" title="Come usare il grafico"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-scope" role="dialog" aria-label="Come usare il grafico" hidden>
+              <h3>Grafico</h3>
+              <p>Mostra gli ultimi campioni ricevuti; con il trigger attivo mostra il frame catturato (t = 0 sul punto di trigger). I pulsanti dei canali compaiono quando arrivano dati e servono a mostrarli o nasconderli.</p>
+              <dl>
+                <dt>Trascina</dt><dd>seleziona un intervallo: Δt, media e picco-picco per canale</dd>
+                <dt>Click a sinistra dell'asse Y</dt><dd>aggiunge un marker orizzontale; marker e linea del trigger si trascinano in qualunque punto</dd>
+                <dt>Click sotto l'asse X</dt><dd>aggiunge un cursore verticale (massimo 2): Δt e 1/Δt</dd>
+                <dt>Click su marker/cursore</dt><dd>lo rimuove</dd>
+                <dt>Rotella</dt><dd>zoom X · con Shift: zoom Y</dd>
+                <dt>PUNTI · LOG Y</dt><dd>solo campioni senza linea · scala Y logaritmica</dd>
+              </dl>
+              <h3>Tastiera</h3>
+              <dl>
+                <dt>Spazio</dt><dd>pausa / riprendi</dd>
+                <dt>A · C · R · T</dt><dd>autoscala · svuota · registra · ri-arma il trigger</dd>
+                <dt>+ / −</dt><dd>zoom Y</dd>
+                <dt>] / [</dt><dd>zoom X</dd>
+                <dt>↑ / ↓</dt><dd>offset Y</dd>
+              </dl>
+            </div>
+          </span>
         </div>
+        <div class="chart-wrapper">
+          <canvas id="plot" aria-label="Grafico del segnale nel tempo" role="img"></canvas>
+        </div>
+        <div id="selection-info" class="info-bar" hidden>
+          <span class="info-tag">SEL</span><span id="sel-duration">—</span><span id="sel-avg" class="info-items">—</span>
+        </div>
+        <div id="cursor-info" class="info-bar cursors" hidden></div>
+      </section>
 
-        <!-- GENERATOR -->
-        <div class="tab-panel" id="tab-gen">
-          <div class="tab-content">
-            <div class="tab-row">
-              <label class="ch-label"><input type="checkbox" id="gen-enabled">ENABLED</label>
+      <!-- Controlli -->
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">CONTROLLI</h2>
+          <span class="info push">
+            <button class="info-btn" aria-controls="info-controls" aria-expanded="false" aria-label="Informazioni sui controlli" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-controls" role="dialog" aria-label="Controlli" hidden>
+              <h3>Controlli</h3>
+              <dl>
+                <dt>Y scala</dt><dd>dimezza o raddoppia l'escursione verticale</dd>
+                <dt>Y offset</dt><dd>sposta la vista di ¼ di escursione</dd>
+                <dt>X tempo</dt><dd>meno / più campioni nel frame; accanto: tempo per divisione e numero di campioni</dd>
+                <dt>Decimazione</dt><dd>intervallo minimo tra due campioni visualizzati. OFF = tutti i campioni (consigliato)</dd>
+                <dt>Auto</dt><dd>adatta la scala Y ai canali visibili</dd>
+                <dt>Clear</dt><dd>svuota il buffer</dd>
+                <dt>⏸</dt><dd>pausa: l'acquisizione si ferma (la registrazione continua)</dd>
+              </dl>
             </div>
-            <!-- Per-channel strips -->
-            <div id="gen-channels-list" class="gen-ch-list">
-              <!-- CH1 -->
-              <div class="gen-ch-strip" data-ch="v1">
-                <div class="gen-ch-hdr">
-                  <label class="ch-label"><input type="checkbox" class="gen-ch-toggle" data-ch="v1" checked><span class="ch-dot" style="background:#008184"></span>CH1</label>
-                  <select class="gen-wave sel" data-ch="v1" style="margin-left:auto">
-                    <option value="sine">∿ Sine</option><option value="square">⊓ Square</option><option value="sawtooth">/ Sawtooth</option><option value="triangle">∧ Triangle</option><option value="noise">≋ Noise</option><option value="dc">— DC</option>
-                  </select>
-                </div>
-                <div class="gen-ch-params">
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">AMP</span><span class="gen-val" id="gen-amp-val-v1">256</span></div><input type="range" class="gen-amp" data-ch="v1" min="0" max="512" value="256"></div>
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">OFFSET</span><span class="gen-val" id="gen-off-val-v1">0</span></div><input type="range" class="gen-off" data-ch="v1" min="-1023" max="1023" value="0"></div>
-                  <div class="gen-param gen-freq-param-v1"><div class="gen-param-row"><span class="lbl">FREQ</span><span class="gen-val" id="gen-freq-val-v1">1.0 Hz</span></div><input type="range" class="gen-freq" data-ch="v1" min="0.1" max="20" step="0.1" value="1"></div>
-                  <div class="gen-param gen-duty-param-v1" style="display:none"><div class="gen-param-row"><span class="lbl">DUTY</span><span class="gen-val" id="gen-duty-val-v1">50%</span></div><input type="range" class="gen-duty" data-ch="v1" min="1" max="99" value="50"></div>
-                  <div class="gen-param gen-noise-param-v1" style="display:none"><div class="gen-param-row"><span class="lbl">NOISE</span><span class="gen-val" id="gen-noise-val-v1">50</span></div><input type="range" class="gen-noise" data-ch="v1" min="1" max="256" value="50"></div>
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">PHASE °</span><span class="gen-val" id="gen-phase-val-v1">0°</span></div><input type="range" class="gen-phase" data-ch="v1" min="0" max="360" value="0"></div>
-                </div>
-              </div>
-              <!-- CH2 -->
-              <div class="gen-ch-strip" data-ch="v2" style="display:none">
-                <div class="gen-ch-hdr">
-                  <label class="ch-label"><input type="checkbox" class="gen-ch-toggle" data-ch="v2"><span class="ch-dot" style="background:#FF9900"></span>CH2</label>
-                  <select class="gen-wave sel" data-ch="v2" style="margin-left:auto">
-                    <option value="sine">∿ Sine</option><option value="square">⊓ Square</option><option value="sawtooth">/ Sawtooth</option><option value="triangle">∧ Triangle</option><option value="noise">≋ Noise</option><option value="dc">— DC</option>
-                  </select>
-                </div>
-                <div class="gen-ch-params">
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">AMP</span><span class="gen-val" id="gen-amp-val-v2">256</span></div><input type="range" class="gen-amp" data-ch="v2" min="0" max="512" value="256"></div>
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">OFFSET</span><span class="gen-val" id="gen-off-val-v2">0</span></div><input type="range" class="gen-off" data-ch="v2" min="-1023" max="1023" value="0"></div>
-                  <div class="gen-param gen-freq-param-v2"><div class="gen-param-row"><span class="lbl">FREQ</span><span class="gen-val" id="gen-freq-val-v2">1.0 Hz</span></div><input type="range" class="gen-freq" data-ch="v2" min="0.1" max="20" step="0.1" value="1"></div>
-                  <div class="gen-param gen-duty-param-v2" style="display:none"><div class="gen-param-row"><span class="lbl">DUTY</span><span class="gen-val" id="gen-duty-val-v2">50%</span></div><input type="range" class="gen-duty" data-ch="v2" min="1" max="99" value="50"></div>
-                  <div class="gen-param gen-noise-param-v2" style="display:none"><div class="gen-param-row"><span class="lbl">NOISE</span><span class="gen-val" id="gen-noise-val-v2">50</span></div><input type="range" class="gen-noise" data-ch="v2" min="1" max="256" value="50"></div>
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">PHASE °</span><span class="gen-val" id="gen-phase-val-v2">0°</span></div><input type="range" class="gen-phase" data-ch="v2" min="0" max="360" value="0"></div>
-                </div>
-              </div>
-              <!-- CH3 -->
-              <div class="gen-ch-strip" data-ch="v3" style="display:none">
-                <div class="gen-ch-hdr">
-                  <label class="ch-label"><input type="checkbox" class="gen-ch-toggle" data-ch="v3"><span class="ch-dot" style="background:#FF2B2B"></span>CH3</label>
-                  <select class="gen-wave sel" data-ch="v3" style="margin-left:auto">
-                    <option value="sine">∿ Sine</option><option value="square">⊓ Square</option><option value="sawtooth">/ Sawtooth</option><option value="triangle">∧ Triangle</option><option value="noise">≋ Noise</option><option value="dc">— DC</option>
-                  </select>
-                </div>
-                <div class="gen-ch-params">
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">AMP</span><span class="gen-val" id="gen-amp-val-v3">256</span></div><input type="range" class="gen-amp" data-ch="v3" min="0" max="512" value="256"></div>
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">OFFSET</span><span class="gen-val" id="gen-off-val-v3">0</span></div><input type="range" class="gen-off" data-ch="v3" min="-1023" max="1023" value="0"></div>
-                  <div class="gen-param gen-freq-param-v3"><div class="gen-param-row"><span class="lbl">FREQ</span><span class="gen-val" id="gen-freq-val-v3">1.0 Hz</span></div><input type="range" class="gen-freq" data-ch="v3" min="0.1" max="20" step="0.1" value="1"></div>
-                  <div class="gen-param gen-duty-param-v3" style="display:none"><div class="gen-param-row"><span class="lbl">DUTY</span><span class="gen-val" id="gen-duty-val-v3">50%</span></div><input type="range" class="gen-duty" data-ch="v3" min="1" max="99" value="50"></div>
-                  <div class="gen-param gen-noise-param-v3" style="display:none"><div class="gen-param-row"><span class="lbl">NOISE</span><span class="gen-val" id="gen-noise-val-v3">50</span></div><input type="range" class="gen-noise" data-ch="v3" min="1" max="256" value="50"></div>
-                  <div class="gen-param"><div class="gen-param-row"><span class="lbl">PHASE °</span><span class="gen-val" id="gen-phase-val-v3">0°</span></div><input type="range" class="gen-phase" data-ch="v3" min="0" max="360" value="0"></div>
-                </div>
-              </div>
+          </span>
+        </div>
+        <div class="fields">
+          <div class="field">
+            <span class="lbl">Y SCALA</span>
+            <div class="btn-group">
+              <button class="btn icon" id="y-zoom-in" aria-label="Zoom Y avanti" title="Zoom Y avanti (+)">＋</button>
+              <button class="btn icon" id="y-zoom-out" aria-label="Zoom Y indietro" title="Zoom Y indietro (−)">－</button>
             </div>
-            <div class="tab-row" style="gap:6px">
-              <span class="lbl">ADD:</span>
-              <button class="btn gen-add-ch" data-ch="v1" style="width:auto;padding:0 8px;font-size:11px">+CH1</button>
-              <button class="btn gen-add-ch" data-ch="v2" style="width:auto;padding:0 8px;font-size:11px">+CH2</button>
-              <button class="btn gen-add-ch" data-ch="v3" style="width:auto;padding:0 8px;font-size:11px">+CH3</button>
+          </div>
+          <div class="field">
+            <span class="lbl">Y OFFSET</span>
+            <div class="btn-group">
+              <button class="btn icon" id="y-offset-up" aria-label="Sposta su" title="Sposta su (↑)">▲</button>
+              <button class="btn icon" id="y-offset-down" aria-label="Sposta giù" title="Sposta giù (↓)">▼</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="lbl">X TEMPO</span>
+            <div class="btn-group">
+              <button class="btn icon" id="x-zoom-in" aria-label="Zoom X avanti (meno campioni)" title="Zoom X avanti (])">＋</button>
+              <button class="btn icon" id="x-zoom-out" aria-label="Zoom X indietro (più campioni)" title="Zoom X indietro ([)">－</button>
+              <span class="readout"><span id="msdiv-display">—</span><span id="xsamples-display">—</span></span>
+            </div>
+          </div>
+          <div class="field grow">
+            <label class="lbl" for="decim-slider">DECIMAZIONE</label>
+            <div class="slider-row">
+              <input type="range" id="decim-slider" min="0" max="1000" step="1" value="0" data-persist>
+              <span class="readout" id="decim-display">OFF</span>
+            </div>
+          </div>
+          <div class="field">
+            <span class="lbl">AZIONI</span>
+            <div class="btn-group">
+              <button class="btn" id="autoscale-btn" title="Autoscala Y (A)">AUTO</button>
+              <button class="btn" id="clear-btn" title="Svuota il buffer (C)">CLEAR</button>
+              <button class="btn icon" id="pause-btn" aria-label="Pausa" aria-pressed="false" title="Pausa (Spazio)">⏸</button>
             </div>
           </div>
         </div>
+      </section>
 
-        <!-- FIT -->
-        <div class="tab-panel" id="tab-analysis">
-          <div class="tab-content">
-            <div class="tab-row">
-              <span class="lbl" id="analysis-paused" style="display:none;color:#e65100">PAUSED</span>
-              <label class="ch-label"><input type="checkbox" id="analysis-enabled">ENABLED</label>
-              <div class="ctrl-grp"><span class="lbl">CHANNEL</span>
-                <select id="analysis-channel" class="sel"><option value="v1">CH1</option><option value="v2">CH2</option><option value="v3">CH3</option></select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">FIT</span>
-                <select id="analysis-fit" class="sel">
-                  <option value="horizontal">Horizontal (y=a)</option>
-                  <option value="linear">Linear (y=ax+b)</option>
-                  <option value="power">Power (y=axᵇ)</option>
-                  <option value="exponential">Exponential (y=aeᵇˣ)</option>
-                  <option value="sinusoidal">Sinusoidal</option>
-                  <option value="logarithmic">Logarithmic</option>
-                </select>
-              </div>
+      <!-- Statistiche -->
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">STATISTICHE</h2>
+          <span class="info push">
+            <button class="info-btn" aria-controls="info-stats" aria-expanded="false" aria-label="Informazioni sulle statistiche" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-stats" role="dialog" aria-label="Statistiche" hidden>
+              <h3>Statistiche</h3>
+              <p>Minimo, massimo, media e ultimo valore di ogni canale visibile, calcolati sul frame mostrato nel grafico. Per misure più complete apri <b>Misure</b> nel menu Strumenti.</p>
             </div>
-            <div id="analysis-result" class="analysis-result">
-              <span id="analysis-formula" class="analysis-formula">—</span>
-              <span class="analysis-r2txt">R² = <span id="analysis-r2">—</span></span>
-            </div>
-            <p class="hint">Usa la selezione sul grafico per limitare il range. Attivando si mette in pausa.</p>
-          </div>
+          </span>
         </div>
+        <div class="stats-grid hdr"><span></span><span>MIN</span><span>MAX</span><span>MEDIA</span><span>ULTIMO</span></div>
+        <div id="stats-rows"></div>
+        <p class="muted-text" id="stats-empty">Nessun canale attivo.</p>
+      </section>
 
-        <!-- MEASURE -->
-        <div class="tab-panel" id="tab-measure">
-          <div class="tab-content">
-            <div class="tab-row">
-              <label class="ch-label"><input type="checkbox" id="measure-auto" checked>AUTO</label>
+      <!-- ══ Strumenti: menu + pannelli ══ -->
+      <section class="tools">
+        <nav class="menu" role="tablist" aria-label="Strumenti" aria-orientation="vertical">
+          <span class="menu-title">STRUMENTI</span>
+          <button class="tab-btn active" role="tab" data-tab="tab-trigger">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h6V6h12"/><path d="M12 15l3-3 3 3"/></svg>Trigger</button>
+          <button class="tab-btn" role="tab" data-tab="tab-gen">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12c3-8 6-8 8 0s5 8 8 0c.8-2.2 2-3.5 4-3.5"/></svg>Generatore</button>
+          <button class="tab-btn" role="tab" data-tab="tab-analysis">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21L21 3"/><circle cx="6" cy="15" r="1.6"/><circle cx="11" cy="12" r="1.6"/><circle cx="14" cy="7" r="1.6"/><circle cx="19" cy="8" r="1.6"/></svg>Fit</button>
+          <button class="tab-btn" role="tab" data-tab="tab-measure">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="8" rx="1.5"/><path d="M6 8v3M10 8v4M14 8v3M18 8v4"/></svg>Misure</button>
+          <button class="tab-btn" role="tab" data-tab="tab-fft">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11M9 20V4M14 20v-8M19 20v-5"/></svg>FFT</button>
+          <button class="tab-btn" role="tab" data-tab="tab-xy">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="4.5" transform="rotate(-35 12 12)"/><path d="M12 3v18M3 12h18" opacity=".35"/></svg>XY</button>
+          <button class="tab-btn" role="tab" data-tab="tab-math">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 4H6l6 8-6 8h12"/></svg>Matematica</button>
+          <button class="tab-btn" role="tab" data-tab="tab-alarm">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>Allarmi</button>
+          <button class="tab-btn" role="tab" data-tab="tab-setup">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>Setup</button>
+        </nav>
+
+        <div class="panels">
+          <!-- TRIGGER -->
+          <div class="tab-panel active" id="tab-trigger" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Trigger</h2>
+              <button class="badge off push" id="trigger-status" title="Click per ri-armare (T)">OFF</button>
+              <label class="tgl power"><input type="checkbox" id="trigger-enabled" data-led="tab-trigger">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-trigger" aria-expanded="false" aria-label="Informazioni sul trigger" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-trigger" role="dialog" aria-label="Trigger" hidden>
+                  <h3>Trigger</h3>
+                  <p>Blocca il grafico quando il segnale attraversa il <b>livello</b> nel verso scelto, così un segnale periodico appare fermo. Il punto di trigger è a t = 0, alla posizione scelta del frame.</p>
+                  <dl>
+                    <dt>Auto</dt><dd>se non arriva un trigger torna alla vista libera</dd>
+                    <dt>Normale</dt><dd>tiene a schermo l'ultimo frame finché non arriva il trigger successivo</dd>
+                    <dt>Singolo</dt><dd>cattura un solo frame e si ferma: clicca il badge (o T) per ri-armare</dd>
+                    <dt>Livello</dt><dd>trascina la linea verde (in qualunque punto), scrivi un valore o premi 50%. Il livello si sposta solo quando lo muovi tu; se è fuori dal segnale il badge lo segnala</dd>
+                    <dt>Hold</dt><dd>pausa minima tra due catture</dd>
+                  </dl>
+                  <p>Un'isteresi automatica (3% dell'escursione) evita falsi trigger dovuti al rumore. Con dati lenti il frame si riempie progressivamente (badge "CATTURA").</p>
+                </div>
+              </span>
             </div>
-            <!-- CH1 block -->
-            <div class="meas-ch-block" id="meas-block-v1" style="display:none;border-left:3px solid #008184">
-              <span class="sec-title" style="color:#008184;margin-bottom:4px;display:block">● CH1</span>
-              <div class="measure-grid">
-                <div class="meas-cell" title="Peak-to-peak voltage: differenza tra valore massimo e minimo del segnale"><span class="meas-lbl">Vpp</span><span class="meas-val" id="m-vpp-v1">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Valore minimo campionato nel buffer visibile"><span class="meas-lbl">Vmin</span><span class="meas-val" id="m-vmin-v1">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Valore massimo campionato nel buffer visibile"><span class="meas-lbl">Vmax</span><span class="meas-val" id="m-vmax-v1">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="RMS (Root Mean Square): tensione efficace, sqrt(media dei quadrati)"><span class="meas-lbl">RMS</span><span class="meas-val" id="m-rms-v1">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Frequenza fondamentale stimata dal periodo medio tra zero-crossing ascendenti"><span class="meas-lbl">Freq</span><span class="meas-val" id="m-freq-v1">—</span><span class="meas-unit">Hz</span></div>
-                <div class="meas-cell" title="Periodo medio tra due zero-crossing ascendenti consecutivi"><span class="meas-lbl">Period</span><span class="meas-val" id="m-period-v1">—</span><span class="meas-unit">ms</span></div>
-                <div class="meas-cell" title="Duty cycle: percentuale di tempo in cui il segnale è sopra il valor medio"><span class="meas-lbl">Duty</span><span class="meas-val" id="m-duty-v1">—</span><span class="meas-unit">%</span></div>
-                <div class="meas-cell" title="Crest factor: rapporto tra valore di picco e RMS. Segnale sinusoidale ≈ 1.414"><span class="meas-lbl">Crest</span><span class="meas-val" id="m-crest-v1">—</span><span class="meas-unit">×</span></div>
-                <div class="meas-cell" title="Slew rate: massima velocità di variazione del segnale (ADC per ms)"><span class="meas-lbl">Slew</span><span class="meas-val" id="m-slew-v1">—</span><span class="meas-unit">/ms</span></div>
-                <div class="meas-cell" title="Zero crossing: numero di attraversamenti del valor medio nel buffer visibile"><span class="meas-lbl">Zero ✕</span><span class="meas-val" id="m-cross-v1">—</span><span class="meas-unit">n</span></div>
-                <div class="meas-cell" title="Rise time: tempo impiegato dal fronte di salita per passare dal 10% al 90% del Vpp"><span class="meas-lbl">Rise</span><span class="meas-val" id="m-rise-v1">—</span><span class="meas-unit">ms</span></div>
-                <div class="meas-cell" title="Fall time: tempo impiegato dal fronte di discesa per passare dal 90% al 10% del Vpp"><span class="meas-lbl">Fall</span><span class="meas-val" id="m-fall-v1">—</span><span class="meas-unit">ms</span></div>
-              </div>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="trigger-mode">MODALITÀ</label>
+                <select id="trigger-mode" class="sel" data-persist>
+                  <option value="auto" selected>Auto</option><option value="normal">Normale</option><option value="single">Singolo</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="trigger-channel">CANALE</label>
+                <select id="trigger-channel" class="sel ch-select" data-persist></select></div>
+              <div class="field"><label class="lbl" for="trigger-edge">FRONTE</label>
+                <select id="trigger-edge" class="sel" data-persist>
+                  <option value="rising">↑ Salita</option><option value="falling">↓ Discesa</option><option value="both">↕ Entrambi</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="trigger-level">LIVELLO</label>
+                <div class="btn-group">
+                  <input type="number" id="trigger-level" class="txt num" step="any" value="512" data-persist>
+                  <button class="btn" id="trigger-50" title="Livello a metà dell'escursione del segnale">50%</button>
+                </div></div>
+              <div class="field"><label class="lbl" for="trigger-pos">POSIZIONE</label>
+                <select id="trigger-pos" class="sel" data-persist>
+                  <option value="0.1">10%</option><option value="0.25" selected>25%</option><option value="0.5">50%</option><option value="0.75">75%</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="trigger-hold">HOLD</label>
+                <select id="trigger-hold" class="sel" data-persist>
+                  <option value="0" selected>Nessuno</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="5000">5 s</option>
+                </select></div>
             </div>
-            <!-- CH2 block -->
-            <div class="meas-ch-block" id="meas-block-v2" style="display:none;border-left:3px solid #FF9900">
-              <span class="sec-title" style="color:#FF9900;margin-bottom:4px;display:block">● CH2</span>
-              <div class="measure-grid">
-                <div class="meas-cell" title="Peak-to-peak voltage: differenza tra valore massimo e minimo del segnale"><span class="meas-lbl">Vpp</span><span class="meas-val" id="m-vpp-v2">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Valore minimo campionato nel buffer visibile"><span class="meas-lbl">Vmin</span><span class="meas-val" id="m-vmin-v2">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Valore massimo campionato nel buffer visibile"><span class="meas-lbl">Vmax</span><span class="meas-val" id="m-vmax-v2">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="RMS (Root Mean Square): tensione efficace, sqrt(media dei quadrati)"><span class="meas-lbl">RMS</span><span class="meas-val" id="m-rms-v2">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Frequenza fondamentale stimata dal periodo medio tra zero-crossing ascendenti"><span class="meas-lbl">Freq</span><span class="meas-val" id="m-freq-v2">—</span><span class="meas-unit">Hz</span></div>
-                <div class="meas-cell" title="Periodo medio tra due zero-crossing ascendenti consecutivi"><span class="meas-lbl">Period</span><span class="meas-val" id="m-period-v2">—</span><span class="meas-unit">ms</span></div>
-                <div class="meas-cell" title="Duty cycle: percentuale di tempo in cui il segnale è sopra il valor medio"><span class="meas-lbl">Duty</span><span class="meas-val" id="m-duty-v2">—</span><span class="meas-unit">%</span></div>
-                <div class="meas-cell" title="Crest factor: rapporto tra valore di picco e RMS. Segnale sinusoidale ≈ 1.414"><span class="meas-lbl">Crest</span><span class="meas-val" id="m-crest-v2">—</span><span class="meas-unit">×</span></div>
-                <div class="meas-cell" title="Slew rate: massima velocità di variazione del segnale (ADC per ms)"><span class="meas-lbl">Slew</span><span class="meas-val" id="m-slew-v2">—</span><span class="meas-unit">/ms</span></div>
-                <div class="meas-cell" title="Zero crossing: numero di attraversamenti del valor medio nel buffer visibile"><span class="meas-lbl">Zero ✕</span><span class="meas-val" id="m-cross-v2">—</span><span class="meas-unit">n</span></div>
-                <div class="meas-cell" title="Rise time: tempo impiegato dal fronte di salita per passare dal 10% al 90% del Vpp"><span class="meas-lbl">Rise</span><span class="meas-val" id="m-rise-v2">—</span><span class="meas-unit">ms</span></div>
-                <div class="meas-cell" title="Fall time: tempo impiegato dal fronte di discesa per passare dal 90% al 10% del Vpp"><span class="meas-lbl">Fall</span><span class="meas-val" id="m-fall-v2">—</span><span class="meas-unit">ms</span></div>
-              </div>
-            </div>
-            <!-- CH3 block -->
-            <div class="meas-ch-block" id="meas-block-v3" style="display:none;border-left:3px solid #FF2B2B">
-              <span class="sec-title" style="color:#FF2B2B;margin-bottom:4px;display:block">● CH3</span>
-              <div class="measure-grid">
-                <div class="meas-cell" title="Peak-to-peak voltage: differenza tra valore massimo e minimo del segnale"><span class="meas-lbl">Vpp</span><span class="meas-val" id="m-vpp-v3">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Valore minimo campionato nel buffer visibile"><span class="meas-lbl">Vmin</span><span class="meas-val" id="m-vmin-v3">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Valore massimo campionato nel buffer visibile"><span class="meas-lbl">Vmax</span><span class="meas-val" id="m-vmax-v3">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="RMS (Root Mean Square): tensione efficace, sqrt(media dei quadrati)"><span class="meas-lbl">RMS</span><span class="meas-val" id="m-rms-v3">—</span><span class="meas-unit">ADC</span></div>
-                <div class="meas-cell" title="Frequenza fondamentale stimata dal periodo medio tra zero-crossing ascendenti"><span class="meas-lbl">Freq</span><span class="meas-val" id="m-freq-v3">—</span><span class="meas-unit">Hz</span></div>
-                <div class="meas-cell" title="Periodo medio tra due zero-crossing ascendenti consecutivi"><span class="meas-lbl">Period</span><span class="meas-val" id="m-period-v3">—</span><span class="meas-unit">ms</span></div>
-                <div class="meas-cell" title="Duty cycle: percentuale di tempo in cui il segnale è sopra il valor medio"><span class="meas-lbl">Duty</span><span class="meas-val" id="m-duty-v3">—</span><span class="meas-unit">%</span></div>
-                <div class="meas-cell" title="Crest factor: rapporto tra valore di picco e RMS. Segnale sinusoidale ≈ 1.414"><span class="meas-lbl">Crest</span><span class="meas-val" id="m-crest-v3">—</span><span class="meas-unit">×</span></div>
-                <div class="meas-cell" title="Slew rate: massima velocità di variazione del segnale (ADC per ms)"><span class="meas-lbl">Slew</span><span class="meas-val" id="m-slew-v3">—</span><span class="meas-unit">/ms</span></div>
-                <div class="meas-cell" title="Zero crossing: numero di attraversamenti del valor medio nel buffer visibile"><span class="meas-lbl">Zero ✕</span><span class="meas-val" id="m-cross-v3">—</span><span class="meas-unit">n</span></div>
-                <div class="meas-cell" title="Rise time: tempo impiegato dal fronte di salita per passare dal 10% al 90% del Vpp"><span class="meas-lbl">Rise</span><span class="meas-val" id="m-rise-v3">—</span><span class="meas-unit">ms</span></div>
-                <div class="meas-cell" title="Fall time: tempo impiegato dal fronte di discesa per passare dal 90% al 10% del Vpp"><span class="meas-lbl">Fall</span><span class="meas-val" id="m-fall-v3">—</span><span class="meas-unit">ms</span></div>
-              </div>
-            </div>
-            <p class="hint" id="meas-empty-hint">In attesa di segnale sui canali...</p>
           </div>
-        </div>
 
-        <!-- FFT -->
-        <div class="tab-panel" id="tab-fft">
-          <div class="tab-content">
-            <div class="tab-row">
-              <label class="ch-label"><input type="checkbox" id="fft-enabled">ENABLED</label>
-              <div class="ctrl-grp">
-                <label class="ch-label fft-ch-lbl" data-ch="v1"><input type="checkbox" class="fft-ch-toggle" data-ch="v1" checked><span class="ch-dot" style="background:#008184"></span>CH1</label>
-                <label class="ch-label fft-ch-lbl" data-ch="v2"><input type="checkbox" class="fft-ch-toggle" data-ch="v2" checked><span class="ch-dot" style="background:#FF9900"></span>CH2</label>
-                <label class="ch-label fft-ch-lbl" data-ch="v3"><input type="checkbox" class="fft-ch-toggle" data-ch="v3" checked><span class="ch-dot" style="background:#FF2B2B"></span>CH3</label>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">WINDOW</span>
-                <select id="fft-window" class="sel">
-                  <option value="hanning">Hanning</option>
-                  <option value="hamming">Hamming</option>
-                  <option value="blackman">Blackman</option>
-                  <option value="flat-top">Flat Top</option>
-                  <option value="rectangular">Rectangular</option>
-                </select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">SIZE</span>
-                <select id="fft-size" class="sel">
-                  <option value="256">256</option>
-                  <option value="512" selected>512</option>
-                  <option value="1024">1024</option>
-                </select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">SCALE</span>
-                <select id="fft-scale" class="sel">
-                  <option value="linear">Linear</option>
-                  <option value="db" selected>dB</option>
-                </select>
-              </div>
+          <!-- GENERATORE -->
+          <div class="tab-panel" id="tab-gen" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Generatore</h2>
+              <label class="tgl power push"><input type="checkbox" id="gen-enabled" data-led="tab-gen">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-gen" aria-expanded="false" aria-label="Informazioni sul generatore" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-gen" role="dialog" aria-label="Generatore" hidden>
+                  <h3>Generatore</h3>
+                  <p>Simula segnali per provare l'oscilloscopio senza scheda. Ogni canale ha forma d'onda, ampiezza, offset, frequenza, fase e rumore propri.</p>
+                  <p>I valori sono in unità ADC (convertiti in V se attivo in Setup). Frequenze sopra metà del campionamento vanno in aliasing: il valore diventa arancione. Generatore e seriale si escludono a vicenda.</p>
+                </div>
+              </span>
+            </div>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="gen-rate">CAMPIONAMENTO</label>
+                <select id="gen-rate" class="sel" data-persist>
+                  <option value="100">100 Hz</option><option value="250" selected>250 Hz</option><option value="500">500 Hz</option><option value="1000">1 kHz</option>
+                </select></div>
+              <div class="field"><span class="lbl">AGGIUNGI CANALE</span>
+                <div class="btn-group" id="gen-add-btns"></div></div>
+            </div>
+            <div id="gen-strips" class="stack"></div>
+          </div>
+
+          <!-- MATEMATICA -->
+          <div class="tab-panel" id="tab-math" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Matematica</h2>
+              <label class="tgl power push"><input type="checkbox" id="math-enabled" data-persist data-led="tab-math">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-math" aria-expanded="false" aria-label="Informazioni: Matematica" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-math" role="dialog" aria-label="Matematica" hidden>
+                  <h3>Matematica</h3>
+                  <p>Calcola un canale <b>MATH</b> a partire dai canali reali e lo disegna come traccia in più (linea bianca/nera), con la sua riga nelle Statistiche.</p>
+                  <dl>
+                    <dt>A + B · A − B · A × B · A ÷ B</dt><dd>operazioni campione per campione tra due canali</dd>
+                    <dt>dA/dt</dt><dd>derivata (velocità di variazione), in unità al secondo</dd>
+                    <dt>∫A dt</dt><dd>integrale dall'inizio del frame</dd>
+                    <dt>Media mobile</dt><dd>media centrata su N campioni: riduce il rumore</dd>
+                    <dt>Passa-basso</dt><dd>filtro RC del primo ordine con frequenza di taglio fc</dd>
+                    <dt>|A|</dt><dd>valore assoluto</dd>
+                    <dt>Guadagno</dt><dd>moltiplica il risultato per farlo stare nella scala del grafico</dd>
+                  </dl>
+                </div>
+              </span>
+            </div>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="math-op">OPERAZIONE</label>
+                <select id="math-op" class="sel" data-persist>
+                  <option value="add">A + B</option><option value="sub" selected>A − B</option><option value="mul">A × B</option><option value="div">A ÷ B</option>
+                  <option value="deriv">Derivata dA/dt</option><option value="integ">Integrale ∫A dt</option>
+                  <option value="avg">Media mobile di A</option><option value="lowpass">Passa-basso di A</option><option value="abs">Valore assoluto |A|</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="math-a">A</label><select id="math-a" class="sel ch-select" data-persist></select></div>
+              <div class="field" id="math-b-field"><label class="lbl" for="math-b">B</label><select id="math-b" class="sel ch-select" data-persist></select></div>
+              <div class="field" id="math-n-field"><label class="lbl" for="math-n">CAMPIONI N</label><input type="number" id="math-n" class="txt num" min="1" max="1000" step="1" value="10" data-persist></div>
+              <div class="field" id="math-fc-field"><label class="lbl" for="math-fc">TAGLIO fc (Hz)</label><input type="number" id="math-fc" class="txt num" min="0.001" step="any" value="5" data-persist></div>
+              <div class="field"><label class="lbl" for="math-gain">GUADAGNO</label><input type="number" id="math-gain" class="txt num" step="any" value="1" data-persist></div>
+            </div>
+            <div class="result" id="math-result">
+              <span class="result-main" id="math-label">—</span>
+              <span class="result-sub">Unità: <span id="math-unit">—</span></span>
+            </div>
+          </div>
+
+          <!-- FIT -->
+          <div class="tab-panel" id="tab-analysis" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Fit</h2>
+              <span class="badge warn push" id="analysis-paused" hidden>IN PAUSA</span>
+              <label class="tgl power"><input type="checkbox" id="analysis-enabled" data-led="tab-analysis">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-fit" aria-expanded="false" aria-label="Informazioni sul fit" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-fit" role="dialog" aria-label="Fit" hidden>
+                  <h3>Fit</h3>
+                  <p>Adatta un modello ai dati del canale scelto e lo disegna tratteggiato sul grafico, con R² (1 = adattamento perfetto). t è in secondi dall'inizio del frame (o dal punto di trigger).</p>
+                  <p>Trascina sul grafico per limitare l'intervallo: il fit si aggiorna da solo. Attivandolo l'acquisizione va in pausa; disattivandolo torna come prima.</p>
+                </div>
+              </span>
+            </div>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="analysis-channel">CANALE</label>
+                <select id="analysis-channel" class="sel ch-select" data-persist></select></div>
+              <div class="field"><label class="lbl" for="analysis-fit">MODELLO</label>
+                <select id="analysis-fit" class="sel" data-persist>
+                  <option value="horizontal">Costante (y = a)</option>
+                  <option value="linear" selected>Lineare (y = a·t + b)</option>
+                  <option value="power">Potenza (y = a·tᵇ)</option>
+                  <option value="exponential">Esponenziale (y = a·eᵇᵗ)</option>
+                  <option value="sinusoidal">Sinusoidale</option>
+                  <option value="logarithmic">Logaritmico (y = a·ln t + b)</option>
+                </select></div>
+            </div>
+            <div id="analysis-result" class="result" hidden>
+              <span id="analysis-formula" class="result-main">—</span>
+              <span class="result-sub">R² = <span id="analysis-r2">—</span> · <span id="analysis-n">—</span> punti</span>
+            </div>
+            <p class="muted-text">Attiva il fit per calcolarlo sul frame visualizzato.</p>
+          </div>
+
+          <!-- MISURE -->
+          <div class="tab-panel" id="tab-measure" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Misure</h2>
+              <button class="btn push" id="measure-now">MISURA ORA</button>
+              <label class="tgl power"><input type="checkbox" id="measure-auto" checked data-persist>AUTO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-measure" aria-expanded="false" aria-label="Informazioni sulle misure" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-measure" role="dialog" aria-label="Misure" hidden>
+                  <h3>Misure</h3>
+                  <p>Misure automatiche sul frame visualizzato, per ogni canale con dati. Con AUTO si aggiornano da sole; altrimenti usa "Misura ora". Passa il mouse su una cella per la definizione.</p>
+                  <p>Frequenza, periodo e duty usano il livello al 50% con isteresi del 10%; salita e discesa sono 10–90% mediate su tutti i fronti.</p>
+                </div>
+              </span>
+            </div>
+            <div id="meas-blocks" class="stack"></div>
+            <p class="muted-text" id="meas-empty-hint">In attesa di segnale sui canali…</p>
+          </div>
+
+          <!-- FFT -->
+          <div class="tab-panel" id="tab-fft" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">FFT</h2>
+              <label class="tgl power push"><input type="checkbox" id="fft-enabled" data-persist data-led="tab-fft">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-fft" aria-expanded="false" aria-label="Informazioni sulla FFT" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-fft" role="dialog" aria-label="FFT" hidden>
+                  <h3>FFT</h3>
+                  <p>Spettro in frequenza degli ultimi campioni di ogni canale scelto. I campioni vengono ricampionati su una griglia uniforme prima del calcolo.</p>
+                  <p>Le ampiezze sono corrette per la finestra: il picco corrisponde all'ampiezza della sinusoide. Per ampiezze precise usa <b>Flat Top</b>; le altre finestre perdono fino a ~1,4 dB quando la frequenza cade tra due bin.</p>
+                  <p>THD sulle armoniche 2–10; l'SNR esclude fondamentale e armoniche. Risoluzione = campionamento / punti.</p>
+                </div>
+              </span>
+            </div>
+            <div class="fields">
+              <div class="field"><span class="lbl">CANALI</span>
+                <div class="toggle-group" id="fft-ch-toggles"></div></div>
+              <div class="field"><label class="lbl" for="fft-window">FINESTRA</label>
+                <select id="fft-window" class="sel" data-persist>
+                  <option value="hanning">Hann</option><option value="hamming">Hamming</option><option value="blackman">Blackman</option><option value="flat-top">Flat Top</option><option value="rectangular">Rettangolare</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="fft-size">PUNTI</label>
+                <select id="fft-size" class="sel" data-persist>
+                  <option value="256">256</option><option value="512">512</option><option value="1024" selected>1024</option><option value="2048">2048</option><option value="4096">4096</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="fft-scale">SCALA</label>
+                <select id="fft-scale" class="sel" data-persist>
+                  <option value="linear">Lineare</option><option value="db" selected>dB</option>
+                </select></div>
             </div>
             <div class="chart-wrapper fft-wrapper">
-              <canvas id="fft-plot"></canvas>
+              <canvas id="fft-plot" aria-label="Spettro FFT" role="img"></canvas>
             </div>
-            <!-- Per-channel info rows, shown only if channel active -->
-            <div id="fft-info-v1" class="fft-ch-info" style="display:none;border-left:3px solid #008184">
-              <span class="fft-ch-info-title" style="color:#008184">● CH1</span>
-              <div class="fft-info-row">
-                <div class="fft-info-cell"><span class="meas-lbl">PEAK FREQ</span><span class="meas-val" id="fft-peak-freq-v1">—</span><span class="meas-unit">Hz</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">PEAK MAG</span><span class="meas-val" id="fft-peak-mag-v1">—</span><span class="meas-unit fft-unit">dB</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">FUND</span><span class="meas-val" id="fft-fund-v1">—</span><span class="meas-unit">Hz</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">THD</span><span class="meas-val" id="fft-thd-v1">—</span><span class="meas-unit">%</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">SNR</span><span class="meas-val" id="fft-snr-v1">—</span><span class="meas-unit">dB</span></div>
-              </div>
-            </div>
-            <div id="fft-info-v2" class="fft-ch-info" style="display:none;border-left:3px solid #FF9900">
-              <span class="fft-ch-info-title" style="color:#FF9900">● CH2</span>
-              <div class="fft-info-row">
-                <div class="fft-info-cell"><span class="meas-lbl">PEAK FREQ</span><span class="meas-val" id="fft-peak-freq-v2">—</span><span class="meas-unit">Hz</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">PEAK MAG</span><span class="meas-val" id="fft-peak-mag-v2">—</span><span class="meas-unit fft-unit">dB</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">FUND</span><span class="meas-val" id="fft-fund-v2">—</span><span class="meas-unit">Hz</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">THD</span><span class="meas-val" id="fft-thd-v2">—</span><span class="meas-unit">%</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">SNR</span><span class="meas-val" id="fft-snr-v2">—</span><span class="meas-unit">dB</span></div>
-              </div>
-            </div>
-            <div id="fft-info-v3" class="fft-ch-info" style="display:none;border-left:3px solid #FF2B2B">
-              <span class="fft-ch-info-title" style="color:#FF2B2B">● CH3</span>
-              <div class="fft-info-row">
-                <div class="fft-info-cell"><span class="meas-lbl">PEAK FREQ</span><span class="meas-val" id="fft-peak-freq-v3">—</span><span class="meas-unit">Hz</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">PEAK MAG</span><span class="meas-val" id="fft-peak-mag-v3">—</span><span class="meas-unit fft-unit">dB</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">FUND</span><span class="meas-val" id="fft-fund-v3">—</span><span class="meas-unit">Hz</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">THD</span><span class="meas-val" id="fft-thd-v3">—</span><span class="meas-unit">%</span></div>
-                <div class="fft-info-cell"><span class="meas-lbl">SNR</span><span class="meas-val" id="fft-snr-v3">—</span><span class="meas-unit">dB</span></div>
-              </div>
-            </div>
+            <div id="fft-infos" class="stack"></div>
           </div>
-        </div>
 
-        <!-- XY PLOT -->
-        <div class="tab-panel" id="tab-xy">
-          <div class="tab-content">
-            <div class="tab-row">
-              <label class="ch-label"><input type="checkbox" id="xy-enabled">ENABLED</label>
-              <div class="ctrl-grp"><span class="lbl">X</span>
-                <select id="xy-ch-x" class="sel"><option value="v1">CH1</option><option value="v2">CH2</option><option value="v3">CH3</option></select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">Y</span>
-                <select id="xy-ch-y" class="sel"><option value="v1">CH1</option><option value="v2" selected>CH2</option><option value="v3">CH3</option></select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">POINTS</span>
-                <select id="xy-points" class="sel">
-                  <option value="100">100</option>
-                  <option value="200" selected>200</option>
-                  <option value="500">500</option>
-                </select>
-              </div>
-              <div class="ctrl-grp"><span class="lbl">PERSIST</span>
-                <select id="xy-persist" class="sel">
-                  <option value="0">Off</option>
-                  <option value="0.85">Low</option>
-                  <option value="0.95" selected>Med</option>
-                  <option value="0.99">High</option>
-                </select>
-              </div>
-              <label class="ch-label" style="margin-left:auto"><input type="checkbox" id="xy-trace">TRACE</label>
+          <!-- XY -->
+          <div class="tab-panel" id="tab-xy" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">XY</h2>
+              <label class="tgl power push"><input type="checkbox" id="xy-enabled" data-persist data-led="tab-xy">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-xy" aria-expanded="false" aria-label="Informazioni sul grafico XY" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-xy" role="dialog" aria-label="XY" hidden>
+                  <h3>XY</h3>
+                  <p>Disegna un canale in funzione dell'altro (figure di Lissajous): utile per sfasamento e rapporto di frequenza tra due segnali. I punti più recenti sono più intensi.</p>
+                  <p>Con la persistenza attiva usa la scala "Fissa", altrimenti l'autoscala sposta la figura a ogni frame.</p>
+                </div>
+              </span>
+            </div>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="xy-ch-x">ASSE X</label><select id="xy-ch-x" class="sel ch-select" data-persist></select></div>
+              <div class="field"><label class="lbl" for="xy-ch-y">ASSE Y</label><select id="xy-ch-y" class="sel ch-select" data-persist></select></div>
+              <div class="field"><label class="lbl" for="xy-points">PUNTI</label>
+                <select id="xy-points" class="sel" data-persist>
+                  <option value="100">100</option><option value="200" selected>200</option><option value="500">500</option><option value="1000">1000</option><option value="2000">2000</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="xy-persist">PERSISTENZA</label>
+                <select id="xy-persist" class="sel" data-persist>
+                  <option value="0">Off</option><option value="0.85">Bassa</option><option value="0.95" selected>Media</option><option value="0.99">Alta</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="xy-scale">SCALA</label>
+                <select id="xy-scale" class="sel" data-persist>
+                  <option value="auto" selected>Auto</option><option value="fixed">Fissa (= asse Y)</option>
+                </select></div>
+              <div class="field"><span class="lbl">VISTA</span>
+                <label class="tgl"><input type="checkbox" id="xy-trace" data-persist>TRACCIA</label></div>
             </div>
             <div class="xy-wrapper">
-              <canvas id="xy-plot"></canvas>
+              <canvas id="xy-plot" aria-label="Grafico XY" role="img"></canvas>
             </div>
-            <div class="fft-info-row" style="margin-top:4px">
-              <div class="fft-info-cell"><span class="meas-lbl">PHASE Δ</span><span class="meas-val" id="xy-phase">—</span><span class="meas-unit">°</span></div>
-              <div class="fft-info-cell"><span class="meas-lbl">LISSAJOUS</span><span class="meas-val" id="xy-ratio">—</span><span class="meas-unit">fx/fy</span></div>
-              <div class="fft-info-cell"><span class="meas-lbl">X RANGE</span><span class="meas-val" id="xy-xrange">—</span><span class="meas-unit">ADC</span></div>
-              <div class="fft-info-cell"><span class="meas-lbl">Y RANGE</span><span class="meas-val" id="xy-yrange">—</span><span class="meas-unit">ADC</span></div>
-              <div class="fft-info-cell"><span class="meas-lbl">CORR</span><span class="meas-val" id="xy-corr">—</span><span class="meas-unit">r</span></div>
+            <div class="measure-grid">
+              <div class="meas-cell" title="Sfasamento stimato dalla figura di Lissajous"><span class="meas-lbl">Fase Δ</span><span class="meas-val" id="xy-phase">—</span><span class="meas-unit">°</span></div>
+              <div class="meas-cell" title="Rapporto tra gli attraversamenti dei due canali"><span class="meas-lbl">Lissajous</span><span class="meas-val" id="xy-ratio">—</span><span class="meas-unit">fx/fy</span></div>
+              <div class="meas-cell"><span class="meas-lbl">X range</span><span class="meas-val" id="xy-xrange">—</span><span class="meas-unit" data-unit="{u}">ADC</span></div>
+              <div class="meas-cell"><span class="meas-lbl">Y range</span><span class="meas-val" id="xy-yrange">—</span><span class="meas-unit" data-unit="{u}">ADC</span></div>
+              <div class="meas-cell" title="Coefficiente di correlazione di Pearson"><span class="meas-lbl">Correlazione</span><span class="meas-val" id="xy-corr">—</span><span class="meas-unit">r</span></div>
+            </div>
+          </div>
+
+          <!-- ALLARMI -->
+          <div class="tab-panel" id="tab-alarm" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Allarmi</h2>
+              <span class="badge off push" id="alarm-status">OFF</span>
+              <label class="tgl power"><input type="checkbox" id="alarm-enabled" data-persist data-led="tab-alarm">ATTIVO</label>
+              <span class="info">
+                <button class="info-btn" aria-controls="info-alarm" aria-expanded="false" aria-label="Informazioni: Allarmi" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-alarm" role="dialog" aria-label="Allarmi" hidden>
+                  <h3>Allarmi soglia</h3>
+                  <p>Sorveglia i canali e registra un <b>evento</b> quando un valore supera (o scende sotto) la soglia di una regola. Funziona anche in pausa e con il menu su un altro strumento.</p>
+                  <dl>
+                    <dt>Evento</dt><dd>scatta quando la condizione diventa vera; si riattiva solo dopo che il segnale è tornato oltre la soglia (isteresi del 2% contro il rumore)</dd>
+                    <dt>Suono</dt><dd>un bip a ogni evento</dd>
+                    <dt>Grafico</dt><dd>con gli allarmi attivi le soglie sono disegnate come linee arancioni A1, A2…</dd>
+                  </dl>
+                  <p>Durante un allarme la voce Allarmi del menu lampeggia in rosso. Le regole restano salvate.</p>
+                </div>
+              </span>
+            </div>
+            <div class="fields">
+              <div class="field"><span class="lbl">REGOLE</span>
+                <button class="btn" id="alarm-add">+ AGGIUNGI REGOLA</button></div>
+              <div class="field"><span class="lbl">OPZIONI</span>
+                <label class="tgl"><input type="checkbox" id="alarm-sound" data-persist>🔔 SUONO</label></div>
+              <div class="field"><span class="lbl">EVENTI</span>
+                <button class="btn" id="alarm-clear">AZZERA</button></div>
+            </div>
+            <div id="alarm-rules" class="stack"></div>
+            <p class="muted-text" id="alarm-empty">Nessuna regola: aggiungine una.</p>
+            <h3 class="sub-title">Registro eventi</h3>
+            <div id="alarm-log" class="event-log"></div>
+            <p class="muted-text" id="alarm-log-empty">Nessun evento.</p>
+          </div>
+
+          <!-- SETUP -->
+          <div class="tab-panel" id="tab-setup" role="tabpanel">
+            <div class="panel-head">
+              <h2 class="panel-title">Setup</h2>
+              <span class="info push">
+                <button class="info-btn" aria-controls="info-setup" aria-expanded="false" aria-label="Informazioni sul setup" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+                <div class="info-pop" id="info-setup" role="dialog" aria-label="Setup" hidden>
+                  <h3>Formato seriale</h3>
+                  <p>Una riga per campione. Formati accettati:</p>
+                  <dl>
+                    <dt>Valori</dt><dd>separati da virgola, spazio, tab o punto e virgola: <code>512,300,1023</code></dd>
+                    <dt>Etichette</dt><dd>formato Serial Plotter: <code>temp:23.5 luce:812</code> (fino a 6 canali)</dd>
+                    <dt>Timestamp</dt><dd>per tempi precisi la prima colonna può essere <code>millis()</code> o <code>micros()</code> della scheda</dd>
+                  </dl>
+                  <p>Esempio: <code>Serial.print(micros()); Serial.print(','); Serial.println(analogRead(A0));</code></p>
+                  <h3>Unità</h3>
+                  <p>In Volt: V = valore × VREF / (2^bit − 1). Il buffer già acquisito viene convertito.</p>
+                </div>
+              </span>
+            </div>
+            <h3 class="sub-title">Formato seriale</h3>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="ts-mode">TIMESTAMP</label>
+                <select id="ts-mode" class="sel" data-persist>
+                  <option value="none" selected>Nessuno (orario di arrivo)</option>
+                  <option value="ms">Prima colonna = millis()</option>
+                  <option value="us">Prima colonna = micros()</option>
+                </select></div>
+            </div>
+            <h3 class="sub-title">Unità</h3>
+            <div class="fields">
+              <div class="field"><label class="lbl" for="units-sel">UNITÀ</label>
+                <select id="units-sel" class="sel" data-persist>
+                  <option value="adc" selected>ADC (valori grezzi)</option>
+                  <option value="v">Volt</option>
+                </select></div>
+              <div class="field"><label class="lbl" for="vref-input">VREF (V)</label>
+                <input type="number" id="vref-input" class="txt num" min="0.1" max="50" step="0.01" value="5" data-persist></div>
+              <div class="field"><label class="lbl" for="bits-sel">RISOLUZIONE</label>
+                <select id="bits-sel" class="sel" data-persist>
+                  <option value="8">8 bit</option><option value="10" selected>10 bit (Uno/Nano/Mega)</option><option value="12">12 bit (Due/Zero/ESP32)</option><option value="14">14 bit (R4)</option><option value="16">16 bit</option>
+                </select></div>
             </div>
           </div>
         </div>
+      </section>
+    </main>
 
-      </div><!-- end tab-section -->
-    </div><!-- end col-left -->
+    <!-- ══ COLONNA DESTRA ══ -->
+    <aside class="col-right">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">INFO SEGNALE</h2>
+          <span class="info push">
+            <button class="info-btn" aria-controls="info-signal" aria-expanded="false" aria-label="Informazioni sul segnale" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-signal" role="dialog" aria-label="Info segnale" hidden>
+              <h3>Info segnale</h3>
+              <dl>
+                <dt>Sorgente</dt><dd>seriale, generatore o nessuna</dd>
+                <dt>Campionamento</dt><dd>campioni al secondo in arrivo (media mobile)</dd>
+                <dt>Δt medio</dt><dd>intervallo medio tra due campioni</dd>
+                <dt>Buffer</dt><dd>campioni in memoria / capacità (servono a grafico, FFT e XY)</dd>
+              </dl>
+            </div>
+          </span>
+        </div>
+        <div class="kv"><span class="lbl">SORGENTE</span><span class="kv-val" id="info-source">—</span></div>
+        <div class="kv"><span class="lbl">CAMPIONAMENTO</span><span class="kv-val" id="info-freq">—</span></div>
+        <div class="kv"><span class="lbl">Δt MEDIO</span><span class="kv-val" id="info-delay">—</span></div>
+        <div class="kv"><span class="lbl">BUFFER</span><span class="kv-val" id="info-buffer">—</span></div>
+      </section>
 
-    <!-- ══ RIGHT COLUMN ══ -->
-    <div class="col-right">
-      <div class="right-block">
-        <span class="sec-title">SIGNAL INFO</span>
-        <div class="sig-row"><span class="lbl">FREQ</span><span class="sig-val" id="info-freq">—</span></div>
-        <div class="sig-row"><span class="lbl">DELAY</span><span class="sig-val" id="info-delay">—</span></div>
-        <div class="sig-row"><span class="lbl">BUFFER</span><span class="sig-val" id="info-buffer">—</span></div>
-      </div>
-      <div class="right-block right-log">
-        <span class="sec-title">VALUES LOG</span>
-        <div id="values-list"></div>
-        <button class="dl-btn" id="download-csv">⬇ Download CSV</button>
-      </div>
-    </div>
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">REGISTRAZIONE</h2>
+          <span class="info push">
+            <button class="info-btn" aria-controls="info-rec" aria-expanded="false" aria-label="Informazioni sulla registrazione" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-rec" role="dialog" aria-label="Registrazione" hidden>
+              <h3>Registrazione</h3>
+              <p><b>REC</b> salva ogni campione ricevuto, senza decimazione e anche in pausa, fino a 2 milioni di campioni. Poi scarica tutto con "CSV registrazione".</p>
+              <p>"CSV buffer" esporta solo i campioni attualmente in memoria. Il tempo è in millisecondi dal primo campione.</p>
+            </div>
+          </span>
+        </div>
+        <div class="kv">
+          <button class="btn rec" id="rec-btn" aria-pressed="false" title="Registra senza limite di buffer (R)">● REC</button>
+          <span class="kv-val muted" id="rec-status">—</span>
+        </div>
+        <div class="stack tight">
+          <button class="btn block" id="download-rec" disabled>⬇ CSV registrazione</button>
+          <button class="btn block" id="download-csv">⬇ CSV buffer</button>
+        </div>
+      </section>
 
-  </div><!-- end main -->
-</div><!-- end container -->
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">INVIO SERIALE</h2>
+          <span class="info push">
+            <button class="info-btn" aria-controls="info-tx" aria-expanded="false" aria-label="Informazioni sull'invio seriale" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-tx" role="dialog" aria-label="Invio seriale" hidden>
+              <h3>Invio seriale</h3>
+              <p>Manda un comando alla scheda (es. per cambiare la frequenza di campionamento nello sketch). Premi Invio o "INVIA". Disponibile solo con la seriale connessa.</p>
+              <p>Il fine riga viene aggiunto in coda: usa lo stesso che legge lo sketch (di solito <code>\n</code>).</p>
+            </div>
+          </span>
+        </div>
+        <div class="btn-group">
+          <input type="text" id="tx-input" class="txt grow" placeholder="Comando…" aria-label="Testo da inviare" disabled>
+          <button class="btn" id="tx-send" disabled>INVIA</button>
+        </div>
+        <div class="kv">
+          <label class="lbl" for="tx-eol">FINE RIGA</label>
+          <select id="tx-eol" class="sel" data-persist>
+            <option value="lf" selected>\n (LF)</option><option value="crlf">\r\n (CRLF)</option><option value="none">Nessuno</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">LOG VALORI</h2>
+          <span class="info push">
+            <button class="info-btn" aria-controls="info-log" aria-expanded="false" aria-label="Informazioni sul log" title="Informazioni"><svg><use href="#i-info"/></svg></button>
+            <div class="info-pop" id="info-log" role="dialog" aria-label="Log valori" hidden>
+              <h3>Log valori</h3>
+              <p>L'ultimo campione ricevuto, aggiunto 5 volte al secondo con l'orario. Restano le ultime 100 righe. Se scorri in alto la lista non salta in fondo.</p>
+            </div>
+          </span>
+        </div>
+        <div id="values-list" aria-live="off"></div>
+      </section>
+    </aside>
+
+  </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
 
 <script src="app.js"></script>
 </body>
